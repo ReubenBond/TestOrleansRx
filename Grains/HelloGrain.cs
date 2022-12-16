@@ -6,21 +6,23 @@ using System.Reactive.Subjects;
 
 namespace Grains;
 
-public class HelloGrain : Grain, IHello
+public class HelloGrain : Grain, IHello, IDisposable
 {
     private readonly ILogger _logger;
-    private ISubject<long> _ticksSubj;
-    public IObservable<long> Ticks => _ticksSubj.AsObservable();
+    private readonly ISubject<long> _ticksSubj;
+    private readonly IObservable<long> _ticks;
+    private readonly IDisposable _ticksSubscription;
 
     public HelloGrain(ILogger<HelloGrain> logger)
     {
         _logger = logger;
         _ticksSubj = new Subject<long>();
+        _ticks = _ticksSubj.AsObservable();
+        _ticksSubscription = _ticks.Subscribe(x => _logger.LogInformation($"Tick received {x}"));
     }
     public override Task OnActivateAsync(CancellationToken token)
     {
         _logger.LogInformation("OnActivateAsync");
-        Ticks.Subscribe(x => _logger.LogInformation($"Tick received {x}"));
         return Task.CompletedTask;
     }
 
@@ -47,13 +49,18 @@ public class HelloGrain : Grain, IHello
 
         var rxScheduler = new TaskPoolScheduler(new TaskFactory(TaskScheduler.Current));
 
-        Observable.Interval(TimeSpan.FromSeconds(2))
+        // NOTE: be sure to dispose any observables before the grain deactivates.
+        Observable.Interval(TimeSpan.FromSeconds(1))
             .Take(ticks)
-            .SubscribeOn(ThreadPoolScheduler.Instance)
+            .SubscribeOn(rxScheduler)
             .ObserveOn(rxScheduler)
             .Subscribe(x => _ticksSubj.OnNext(x));
-            //.Subscribe(async x => await this.AsReference<IHello>().DoTick(x));
 
         return ValueTask.FromResult($"Applying DoT with {ticks} ticks.");
+    }
+
+    public void Dispose()
+    {
+        _ticksSubscription.Dispose();
     }
 }
